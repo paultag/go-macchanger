@@ -20,52 +20,37 @@
 
 package macchanger
 
-/*
-#include <sys/ioctl.h>
-#include <net/if_arp.h>
-#include <net/if.h>
-#include <malloc.h>
-#include <string.h>
-
-
-int _set_hardware_address(char* name, char addr[]) {
-	struct ifreq ifr;
-	int s;
-
-	memcpy(ifr.ifr_hwaddr.sa_data, addr, 6);
-	strcpy(ifr.ifr_name, name);
-
-	s = socket(AF_INET, SOCK_DGRAM, 0);
-	if (s == -1) {
-		return -1;
-	}
-
-	ifr.ifr_hwaddr.sa_family = ARPHRD_ETHER;
-	return ioctl(s, SIOCSIFHWADDR, &ifr);
-}
-
-*/
-import "C"
-
 import (
-	"fmt"
 	"net"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
+
+type ifreq_hwaddr struct {
+	name   [unix.IFNAMSIZ]byte
+	hwaddr unix.RawSockaddr
+}
 
 // Change the Hardware Address (MAC) for the interface `iface`
 // to `mac`.
 func ChangeHardwareAddr(iface net.Interface, mac net.HardwareAddr) error {
-	cName := C.CString(iface.Name)
-	defer C.free(unsafe.Pointer(cName))
-
-	cAddr := (*C.char)(C.CBytes(mac))
-	defer C.free(unsafe.Pointer(cAddr))
-
-	if i := C._set_hardware_address(cName, cAddr); i != 0 {
-		return fmt.Errorf("Failed to set Hardware Address")
+	var ifr ifreq_hwaddr
+	copy(ifr.name[:], append([]byte(iface.Name), 0))
+	ifr.hwaddr.Family = unix.ARPHRD_ETHER
+	if len(mac) > len(ifr.hwaddr.Data) {
+		mac = mac[:len(ifr.hwaddr.Data)]
 	}
-	return nil
+	for i, _ := range mac {
+		ifr.hwaddr.Data[i] = int8(mac[i])
+	}
+
+	s, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(s)
+	return unix.IoctlSetInt(s, unix.SIOCSIFHWADDR, int(uintptr(unsafe.Pointer(&ifr))))
 }
 
 // vim: foldmethod=marker
